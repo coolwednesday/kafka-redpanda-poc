@@ -55,12 +55,12 @@ This benchmark does not aim to declare an absolute winner between the two system
 | Component | Specification |
 |---|---|
 | **Language** | Go 1.22+ |
-| **Client Library** | [franz-go](https://github.com/twmb/franz-go) v1.20.7 — a pure Go Kafka protocol client compatible with both brokers |
-| **Apache Kafka** | v3.7.0, KRaft mode (no ZooKeeper dependency), single broker |
-| **Redpanda** | v24.1.1, single node, 1 CPU shard (`--smp 1`), 512 MB memory |
+| **Client Library** | [franz-go](https://github.com/twmb/franz-go) v1.20.7 — a pure Go Kafka protocol client compatible with both brokers ([`go.mod`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/go.mod)) |
+| **Apache Kafka** | v3.7.0, KRaft mode (no ZooKeeper dependency), single broker ([`docker-compose.yaml`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/docker-compose.yaml)) |
+| **Redpanda** | v24.1.1, single node, 1 CPU shard (`--smp 1`), 512 MB memory ([`docker-compose.yaml`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/docker-compose.yaml)) |
 | **Infrastructure** | Docker containers on local machine (shared CPU and memory) |
-| **Topic Configuration** | 6 partitions, replication factor 1 |
-| **Producer Configuration** | `acks=all`, `linger=5ms`, `batch.max.bytes=16KB`, `max.buffered.records=10,000` |
+| **Topic Configuration** | 6 partitions, replication factor 1 ([`broker/broker.go#L42-L71`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/broker/broker.go#L42-L71)) |
+| **Producer Configuration** | `acks=all`, `linger=5ms`, `batch.max.bytes=16KB`, `max.buffered.records=10,000` ([`producer/producer.go#L34-L40`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/producer/producer.go#L34-L40)) |
 | **Concurrency** | 4 concurrent producer goroutines |
 | **Message Volume** | 100,000 messages per run |
 | **Message Size** | ~512 bytes (JSON) |
@@ -77,10 +77,10 @@ The following controls ensure an apples-to-apples comparison between the two bro
 | Control | Implementation |
 |---|---|
 | **Unified client library** | franz-go communicates via the Kafka wire protocol, which both Kafka and Redpanda implement natively. No broker-specific code paths exist in the benchmark. |
-| **Identical producer settings** | Acknowledgment mode, batching parameters, linger duration, and buffer limits are configured identically for both brokers. |
-| **Deterministic payload** | A seeded random number generator (`seed=42`) produces the same sequence of message types and content for every run. |
-| **Clean state per run** | The benchmark topic is deleted and recreated before each execution. A unique consumer group ID (timestamped) prevents stale offset interference. |
-| **Warm-up exclusion** | The first 1,000 messages are produced but excluded from latency calculations, eliminating cold-start artifacts (TCP handshake, partition leader discovery, JIT compilation). |
+| **Identical producer settings** | Acknowledgment mode, batching parameters, linger duration, and buffer limits are configured identically for both brokers ([`producer/producer.go#L34-L40`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/producer/producer.go#L34-L40)). |
+| **Deterministic payload** | A seeded random number generator (`seed=42`) produces the same sequence of message types and content for every run ([`payload/payload.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/payload/payload.go)). |
+| **Clean state per run** | The benchmark topic is deleted and recreated before each execution ([`broker/broker.go#L42-L71`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/broker/broker.go#L42-L71)). A unique consumer group ID (timestamped) prevents stale offset interference ([`consumer/consumer.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/consumer/consumer.go)). |
+| **Warm-up exclusion** | The first 1,000 messages are produced but excluded from latency calculations, eliminating cold-start artifacts ([`producer/producer.go#L68-L80`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/producer/producer.go#L68-L80)). |
 
 ### 3.2 Workload Profile
 
@@ -92,7 +92,7 @@ The benchmark simulates a simplified e-commerce event stream with three message 
 | `PaymentSettled` | 20% | Represents a payment confirmation |
 | `InventoryAdjusted` | 10% | Represents a stock level change |
 
-Each message is serialized as JSON and padded to approximately 512 bytes:
+Each message is serialized as JSON and padded to approximately 512 bytes ([`payload/payload.go#L30-L51`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/payload/payload.go#L30-L51)):
 
 ```json
 {
@@ -108,15 +108,17 @@ Each message is serialized as JSON and padded to approximately 512 bytes:
 | Metric | Definition |
 |---|---|
 | **Throughput** (msgs/s) | Total messages successfully produced divided by total elapsed wall-clock time |
-| **Publish Latency (p50)** | Median duration from `Produce()` invocation to broker acknowledgment, across all non-warmup messages |
+| **Publish Latency (p50)** | Median duration from `Produce()` invocation to broker acknowledgment, across all non-warmup messages ([`producer/producer.go#L68-L80`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/producer/producer.go#L68-L80)) |
 | **Publish Latency (p95)** | 95th percentile of the same measurement |
-| **E2E Latency (p50)** | Median duration from the producer-stamped `produce_ts` header to consumer receipt |
+| **E2E Latency (p50)** | Median duration from the producer-stamped `produce_ts` header to consumer receipt ([`consumer/consumer.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/consumer/consumer.go)) |
 | **E2E Latency (p95)** | 95th percentile of the same measurement |
 | **Error Count** | Number of produce calls that returned a non-nil error |
 
-Percentiles are computed by sorting all collected latency samples and selecting the value at the corresponding index. At 99,000 samples (100K minus 1K warmup), this approach is both accurate and performant.
+Percentiles are computed by sorting all collected latency samples and selecting the value at the corresponding index ([`metrics/metrics.go#L26-L40`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/metrics/metrics.go#L26-L40)). At 99,000 samples (100K minus 1K warmup), this approach is both accurate and performant.
 
 ### 3.4 Execution Flow
+
+The full orchestration logic is in [`cmd/benchmark/main.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/cmd/benchmark/main.go):
 
 ```
 1. Parse and validate CLI flags; resolve broker address
@@ -292,7 +294,7 @@ make docker-down
 
 ### 7.3 Standalone Producer & Consumer CLIs
 
-The producer and consumer can also be run as **separate, independent processes**. This allows observation of each component in isolation or simultaneous execution across separate terminals.
+The producer and consumer can also be run as **separate, independent processes** ([`cmd/producer/main.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/cmd/producer/main.go), [`cmd/consumer/main.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/cmd/consumer/main.go)). This allows observation of each component in isolation or simultaneous execution across separate terminals.
 
 ```bash
 # Build all three binaries
@@ -403,35 +405,26 @@ Runs producer and consumer together in one process for automated end-to-end meas
 
 ## 9. Project Structure
 
-```
-kafka-redpanda-poc/
-├── cmd/
-│   ├── benchmark/
-│   │   └── main.go          # Combined benchmark CLI (producer + consumer)
-│   ├── producer/
-│   │   └── main.go          # Standalone producer CLI
-│   └── consumer/
-│       └── main.go          # Standalone consumer CLI
-├── main.go                  # Root entry point (delegates to combined benchmark)
-├── broker/
-│   └── broker.go            # Shared broker utilities (health check, topic mgmt)
-├── producer/
-│   └── producer.go          # Concurrent producer engine with latency tracking
-├── consumer/
-│   └── consumer.go          # Consumer engine with E2E latency measurement
-├── payload/
-│   ├── payload.go           # Deterministic message generator (seeded RNG)
-│   └── payload_test.go      # Unit tests: distribution, size, determinism
-├── metrics/
-│   ├── metrics.go           # Latency collector, percentile computation, CSV export
-│   └── metrics_test.go      # Unit tests: percentile accuracy, CSV formatting
-├── docker-compose.yaml      # Kafka (KRaft) and Redpanda container definitions
-├── Makefile                 # Build, test, and run automation
-├── ARCHITECTURE.md          # Detailed technical architecture
-├── README.md                # This report
-├── go.mod                   # Go module definition
-└── go.sum                   # Dependency integrity checksums
-```
+| File | Description |
+|---|---|
+| [`cmd/benchmark/main.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/cmd/benchmark/main.go) | Combined benchmark CLI (producer + consumer in one process) |
+| [`cmd/producer/main.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/cmd/producer/main.go) | Standalone producer CLI |
+| [`cmd/consumer/main.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/cmd/consumer/main.go) | Standalone consumer CLI |
+| [`main.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/main.go) | Root entry point (delegates to combined benchmark) |
+| [`broker/broker.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/broker/broker.go) | Shared broker utilities (health check, topic management) |
+| [`broker/broker_test.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/broker/broker_test.go) | Unit tests for broker utilities |
+| [`producer/producer.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/producer/producer.go) | Concurrent producer engine with latency tracking |
+| [`producer/producer_test.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/producer/producer_test.go) | Unit tests for producer |
+| [`consumer/consumer.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/consumer/consumer.go) | Consumer engine with E2E latency measurement |
+| [`consumer/consumer_test.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/consumer/consumer_test.go) | Unit tests for consumer |
+| [`payload/payload.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/payload/payload.go) | Deterministic message generator (seeded RNG) |
+| [`payload/payload_test.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/payload/payload_test.go) | Unit tests: distribution, size, determinism |
+| [`metrics/metrics.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/metrics/metrics.go) | Latency collector, percentile computation, CSV export |
+| [`metrics/metrics_test.go`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/metrics/metrics_test.go) | Unit tests: percentile accuracy, CSV formatting |
+| [`docker-compose.yaml`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/docker-compose.yaml) | Kafka (KRaft) and Redpanda container definitions |
+| [`Makefile`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/Makefile) | Build, test, and run automation |
+| [`ARCHITECTURE.md`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/ARCHITECTURE.md) | Detailed technical architecture |
+| [`go.mod`](https://github.com/coolwednesday/kafka-redpanda-poc/blob/main/go.mod) | Go module definition |
 
 For detailed technical architecture, component diagrams, data flow documentation, and design decision rationale, see [ARCHITECTURE.md](ARCHITECTURE.md).
 

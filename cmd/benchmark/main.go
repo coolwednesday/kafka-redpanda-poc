@@ -1,5 +1,3 @@
-// Root entry point — delegates to the combined benchmark command.
-// For standalone usage, see cmd/producer and cmd/consumer.
 package main
 
 import (
@@ -31,6 +29,7 @@ func main() {
 
 	flag.Parse()
 
+	// Resolve broker address
 	brokerAddr, err := broker.ResolveAddr(*brokerType, *kafkaAddr, *redpandaAddr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -47,6 +46,7 @@ func main() {
 		"topic", *topic,
 	)
 
+	// Setup context with signal handling
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -58,23 +58,28 @@ func main() {
 		cancel()
 	}()
 
+	// Health check
 	if err := broker.HealthCheck(ctx, brokers); err != nil {
 		slog.Error("broker health check failed", "error", err)
 		os.Exit(1)
 	}
 	slog.Info("broker health check passed")
 
+	// Topic management: delete and recreate
 	if err := broker.RecreateTopic(ctx, brokers, *topic, 6); err != nil {
 		slog.Error("topic setup failed", "error", err)
 		os.Exit(1)
 	}
 	slog.Info("topic ready", "topic", *topic)
 
+	// Wait briefly for topic to propagate
 	time.Sleep(2 * time.Second)
 
+	// Initialize metrics collectors
 	produceCollector := metrics.NewCollector()
 	e2eCollector := metrics.NewCollector()
 
+	// Start consumer in background
 	consumerGroupID := fmt.Sprintf("bench-%d", time.Now().UnixNano())
 	consumerDone := make(chan consumer.Result, 1)
 
@@ -93,8 +98,10 @@ func main() {
 		consumerDone <- result
 	}()
 
+	// Give consumer time to join group
 	time.Sleep(1 * time.Second)
 
+	// Run producer
 	slog.Info("starting producer")
 	prodResult, err := producer.Run(ctx, producer.Config{
 		Brokers:     brokers,
@@ -114,10 +121,12 @@ func main() {
 		"elapsed", prodResult.Elapsed,
 	)
 
+	// Wait for consumer to drain
 	slog.Info("waiting for consumer to drain")
 	consResult := <-consumerDone
 	slog.Info("consumer finished", "consumed", consResult.Consumed)
 
+	// Compute results
 	throughput := float64(prodResult.Produced) / prodResult.Elapsed.Seconds()
 
 	result := metrics.Result{
@@ -134,8 +143,10 @@ func main() {
 		Warmup:      *warmup,
 	}
 
+	// Print summary
 	metrics.PrintSummary(result)
 
+	// Export CSV
 	if err := metrics.ExportCSV(*csvFile, result); err != nil {
 		slog.Error("csv export failed", "error", err)
 	} else {

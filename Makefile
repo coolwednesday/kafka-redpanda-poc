@@ -1,9 +1,23 @@
-.PHONY: build test run-kafka run-redpanda docker-up docker-down clean
+.PHONY: build build-all test docker-up docker-down \
+       run-kafka run-redpanda run-both \
+       run-producer-kafka run-producer-redpanda \
+       run-consumer-kafka run-consumer-redpanda \
+       clean
 
-BINARY := kafka-redpanda-poc
+# Combined benchmark binary (producer + consumer in one)
+BENCHMARK := bin/benchmark
+
+# Standalone CLIs
+PRODUCER := bin/producer
+CONSUMER := bin/consumer
 
 build:
-	go build -o $(BINARY) .
+	go build -o $(BENCHMARK) ./cmd/benchmark
+
+build-all:
+	go build -o $(BENCHMARK) ./cmd/benchmark
+	go build -o $(PRODUCER) ./cmd/producer
+	go build -o $(CONSUMER) ./cmd/consumer
 
 test:
 	go test ./... -v
@@ -16,18 +30,36 @@ docker-up:
 docker-down:
 	docker compose down -v
 
+# --- Combined benchmark (producer + consumer together) ---
+
 run-kafka: build
-	./$(BINARY) --broker=kafka --concurrency=4 --total=100000
+	./$(BENCHMARK) --broker=kafka --concurrency=4 --total=100000
 
 run-redpanda: build
-	./$(BINARY) --broker=redpanda --concurrency=4 --total=100000
+	./$(BENCHMARK) --broker=redpanda --concurrency=4 --total=100000
 
 run-both: build
 	@echo "=== Running Kafka benchmark ==="
-	./$(BINARY) --broker=kafka --concurrency=4 --total=100000
+	./$(BENCHMARK) --broker=kafka --concurrency=4 --total=100000
 	@echo ""
 	@echo "=== Running Redpanda benchmark ==="
-	./$(BINARY) --broker=redpanda --concurrency=4 --total=100000
+	./$(BENCHMARK) --broker=redpanda --concurrency=4 --total=100000
+
+# --- Standalone producer CLI ---
+
+run-producer-kafka: build-all
+	./$(PRODUCER) --broker=kafka --concurrency=4 --total=100000
+
+run-producer-redpanda: build-all
+	./$(PRODUCER) --broker=redpanda --concurrency=4 --total=100000
+
+# --- Standalone consumer CLI ---
+
+run-consumer-kafka: build-all
+	./$(CONSUMER) --broker=kafka --total=100000
+
+run-consumer-redpanda: build-all
+	./$(CONSUMER) --broker=redpanda --total=100000
 
 clean:
-	rm -f $(BINARY) results.csv
+	rm -rf bin/ results.csv

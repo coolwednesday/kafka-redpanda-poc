@@ -259,7 +259,9 @@ This benchmark exercised a workload profile that favors Redpanda's strengths. Th
 | Docker | 20.10+ with Compose V2 |
 | Make | GNU Make (standard on macOS/Linux) |
 
-### 7.2 Quick Start
+### 7.2 Quick Start (Combined Benchmark)
+
+The combined benchmark runs the producer and consumer together in a single process for automated end-to-end measurement.
 
 ```bash
 # Clone the repository
@@ -288,38 +290,76 @@ cat results.csv
 make docker-down
 ```
 
-### 7.3 Custom Configurations
+### 7.3 Standalone Producer & Consumer CLIs
+
+The producer and consumer can also be run as **separate, independent processes**. This allows observation of each component in isolation or simultaneous execution across separate terminals.
 
 ```bash
-# Increase concurrency and message volume
-go run . --broker=kafka --concurrency=8 --total=500000
+# Build all three binaries
+make build-all
 
-# Use a custom topic name
-go run . --broker=redpanda --topic=load-test --total=50000
+# Terminal 1: Start the producer (creates topic, sends messages)
+./bin/producer --broker=kafka --concurrency=4 --total=100000
 
-# Target a remote broker
-go run . --broker=kafka --kafka-addr=192.168.1.100:9092
-
-# Disable warm-up exclusion
-go run . --broker=redpanda --warmup=0
+# Terminal 2: Start the consumer (reads messages, reports E2E latency)
+./bin/consumer --broker=kafka --total=100000
 ```
 
-### 7.4 Makefile Targets
+**Producer CLI** (`bin/producer`):
+- Accepts `--broker`, `--concurrency`, `--total`, `--warmup`, `--csv`, `--topic`
+- `--setup-topic` flag (default: true) — deletes and recreates the topic before producing
+- Prints producer-side metrics: throughput, p50/p95 publish latency
+- Exports results to CSV
+
+**Consumer CLI** (`bin/consumer`):
+- Accepts `--broker`, `--total`, `--topic`, `--group`, `--timeout`
+- Reads messages and computes E2E latency from `produce_ts` headers
+- Prints consumer-side metrics: consumed count, E2E p50/p95
+
+### 7.4 Custom Configurations
+
+```bash
+# Higher concurrency, more messages
+./bin/producer --broker=kafka --concurrency=8 --total=500000
+
+# Custom topic name
+./bin/producer --broker=redpanda --topic=load-test --total=50000
+
+# Target a remote broker
+./bin/producer --broker=kafka --kafka-addr=192.168.1.100:9092
+
+# Disable warm-up exclusion
+./bin/producer --broker=redpanda --warmup=0
+
+# Consumer with custom group and timeout
+./bin/consumer --broker=kafka --group=my-group --timeout=60s
+```
+
+### 7.5 Makefile Targets
 
 | Target | Description |
 |---|---|
-| `make build` | Compile the benchmark binary |
+| `make build` | Compile the combined benchmark binary |
+| `make build-all` | Compile all three binaries (benchmark, producer, consumer) |
 | `make test` | Run all unit tests with verbose output |
 | `make docker-up` | Start Kafka and Redpanda containers |
 | `make docker-down` | Stop containers and remove associated volumes |
-| `make run-kafka` | Build and execute the benchmark against Kafka |
-| `make run-redpanda` | Build and execute the benchmark against Redpanda |
-| `make run-both` | Execute both benchmarks sequentially |
-| `make clean` | Remove the compiled binary and results CSV |
+| `make run-kafka` | Build and run combined benchmark against Kafka |
+| `make run-redpanda` | Build and run combined benchmark against Redpanda |
+| `make run-both` | Run combined benchmark against both brokers sequentially |
+| `make run-producer-kafka` | Build and run standalone producer against Kafka |
+| `make run-producer-redpanda` | Build and run standalone producer against Redpanda |
+| `make run-consumer-kafka` | Build and run standalone consumer against Kafka |
+| `make run-consumer-redpanda` | Build and run standalone consumer against Redpanda |
+| `make clean` | Remove compiled binaries and results CSV |
 
 ---
 
 ## 8. CLI Reference
+
+### 8.1 Combined Benchmark (`bin/benchmark` or `go run .`)
+
+Runs producer and consumer together in one process for automated end-to-end measurement.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -333,17 +373,52 @@ go run . --broker=redpanda --warmup=0
 | `--warmup` | `int` | `1000` | Number of initial messages excluded from latency metrics |
 | `--consumer-timeout` | `duration` | `30s` | Consumer exits after this duration of inactivity |
 
+### 8.2 Standalone Producer (`bin/producer`)
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--broker` | `string` | `kafka` | Target broker: `kafka` or `redpanda` |
+| `--concurrency` | `int` | `4` | Number of concurrent producer goroutines |
+| `--total` | `int` | `100000` | Total number of messages to produce |
+| `--kafka-addr` | `string` | `localhost:9092` | Kafka broker address |
+| `--redpanda-addr` | `string` | `localhost:19092` | Redpanda broker address |
+| `--csv` | `string` | `results.csv` | Path for CSV output file |
+| `--topic` | `string` | `benchmark` | Topic name |
+| `--warmup` | `int` | `1000` | Warm-up messages excluded from metrics |
+| `--setup-topic` | `bool` | `true` | Delete and recreate topic before producing |
+
+### 8.3 Standalone Consumer (`bin/consumer`)
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--broker` | `string` | `kafka` | Target broker: `kafka` or `redpanda` |
+| `--total` | `int` | `100000` | Total messages to consume before exiting |
+| `--kafka-addr` | `string` | `localhost:9092` | Kafka broker address |
+| `--redpanda-addr` | `string` | `localhost:19092` | Redpanda broker address |
+| `--topic` | `string` | `benchmark` | Topic name |
+| `--group` | `string` | *(auto-generated)* | Consumer group ID |
+| `--timeout` | `duration` | `30s` | Exit after this long with no new messages |
+
 ---
 
 ## 9. Project Structure
 
 ```
 kafka-redpanda-poc/
-├── main.go                  # CLI entry point, orchestration, signal handling
+├── cmd/
+│   ├── benchmark/
+│   │   └── main.go          # Combined benchmark CLI (producer + consumer)
+│   ├── producer/
+│   │   └── main.go          # Standalone producer CLI
+│   └── consumer/
+│       └── main.go          # Standalone consumer CLI
+├── main.go                  # Root entry point (delegates to combined benchmark)
+├── broker/
+│   └── broker.go            # Shared broker utilities (health check, topic mgmt)
 ├── producer/
-│   └── producer.go          # Concurrent producer with latency tracking
+│   └── producer.go          # Concurrent producer engine with latency tracking
 ├── consumer/
-│   └── consumer.go          # Consumer with end-to-end latency measurement
+│   └── consumer.go          # Consumer engine with E2E latency measurement
 ├── payload/
 │   ├── payload.go           # Deterministic message generator (seeded RNG)
 │   └── payload_test.go      # Unit tests: distribution, size, determinism
@@ -352,7 +427,7 @@ kafka-redpanda-poc/
 │   └── metrics_test.go      # Unit tests: percentile accuracy, CSV formatting
 ├── docker-compose.yaml      # Kafka (KRaft) and Redpanda container definitions
 ├── Makefile                 # Build, test, and run automation
-├── ARCHITECTURE.md          # Technical architecture documentation
+├── ARCHITECTURE.md          # Detailed technical architecture
 ├── README.md                # This report
 ├── go.mod                   # Go module definition
 └── go.sum                   # Dependency integrity checksums
